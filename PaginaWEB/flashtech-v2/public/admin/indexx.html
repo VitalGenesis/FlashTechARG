@@ -252,24 +252,22 @@ body{background:var(--bk);color:var(--wh);font-family:'Barlow',sans-serif;min-he
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js';
 import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js';
 import { getFirestore, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js';
-// Storage replaced with Cloudinary (free, no credit card needed)
+import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-storage.js';
 
 // ── CONFIGURACIÓN FIREBASE ──
 const firebaseConfig = {
-  apiKey: "TU_API_KEY",
-  authDomain: "TU_PROJECT.firebaseapp.com",
-  projectId: "TU_PROJECT_ID",
-  storageBucket: "TU_PROJECT.appspot.com",
-  messagingSenderId: "TU_SENDER_ID",
-  appId: "TU_APP_ID"
+  apiKey: "AIzaSyBoCwGgG6YBWlQkkIiSxaYB6P0qW3plu8U",
+  authDomain: "flashtecharg-8ef04.firebaseapp.com",
+  projectId: "flashtecharg-8ef04",
+  storageBucket: "flashtecharg-8ef04.firebasestorage.app",
+  messagingSenderId: "373028007536",
+  appId: "1:373028007536:web:cbb5c2d04366eda321ceb5"
 };
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-// Cloudinary config — reemplazá con tu cloud_name
-const CLOUDINARY_URL = 'https://api.cloudinary.com/v1_1/TU_CLOUD_NAME/image/upload';
-const CLOUDINARY_PRESET = 'flashtech_upload'; // unsigned preset
+const storage = getStorage(app);
 
 let productos = [];
 let editandoId = null;
@@ -381,10 +379,6 @@ function buildForm(p={}) {
   document.getElementById('modal-form-body').innerHTML = `
     <div class="pm-section">
       <div class="pm-section-title">📸 Imagen del producto</div>
-      <div id="cloudinary-warning" style="background:rgba(251,146,60,.1);border:1px solid rgba(251,146,60,.3);padding:10px 14px;margin-bottom:10px;font-size:.76rem;color:#fb923c;display:none;">
-        ⚙️ Para subir fotos: configurá Cloudinary (gratis). <a href="https://cloudinary.com/users/register_free" target="_blank" style="color:#fb923c;font-weight:700;">Crear cuenta gratis →</a>
-        Luego reemplazá <strong>TU_CLOUD_NAME</strong> en el admin y creá un preset llamado <strong>flashtech_upload</strong>.
-      </div>
       <div class="img-upload-area" id="upload-area">
         <input type="file" accept="image/*" id="img-input" onchange="handleImgChange(event)">
         <img id="img-preview" class="img-preview" src="${p.imagen||''}" style="${p.imagen?'display:block':'display:none'}">
@@ -458,12 +452,6 @@ function buildForm(p={}) {
   `;
 }
 
-// Check Cloudinary config
-if (typeof CLOUDINARY_URL !== 'undefined' && CLOUDINARY_URL.includes('TU_CLOUD_NAME')) {
-  const w = document.getElementById('cloudinary-warning');
-  if (w) w.style.display = 'block';
-}
-
 window.handleImgChange = function(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -479,33 +467,23 @@ window.handleImgChange = function(e) {
 };
 
 async function subirImagen(file, nombre) {
-  const prog = document.getElementById('upload-prog');
-  if (prog) { prog.style.display = 'block'; prog.textContent = 'Subiendo imagen... 0%'; }
-  
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('upload_preset', CLOUDINARY_PRESET);
-  formData.append('folder', 'flashtech');
-  
   return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open('POST', CLOUDINARY_URL);
-    xhr.upload.onprogress = e => {
-      if (e.lengthComputable && prog) {
-        prog.textContent = `Subiendo imagen... ${Math.round(e.loaded/e.total*100)}%`;
+    const storageRef = ref(storage, `productos/${Date.now()}_${nombre.replace(/\s/g,'_')}`);
+    const task = uploadBytesResumable(storageRef, file);
+    const prog = document.getElementById('upload-prog');
+    if (prog) prog.style.display = 'block';
+    task.on('state_changed',
+      snap => {
+        const pct = Math.round(snap.bytesTransferred/snap.totalBytes*100);
+        if (prog) prog.textContent = `Subiendo imagen... ${pct}%`;
+      },
+      reject,
+      async () => {
+        const url = await getDownloadURL(task.snapshot.ref);
+        if (prog) prog.style.display = 'none';
+        resolve(url);
       }
-    };
-    xhr.onload = () => {
-      if (prog) prog.style.display = 'none';
-      if (xhr.status === 200) {
-        const data = JSON.parse(xhr.responseText);
-        resolve(data.secure_url);
-      } else {
-        reject(new Error('Error subiendo imagen a Cloudinary'));
-      }
-    };
-    xhr.onerror = () => { if(prog) prog.style.display='none'; reject(new Error('Error de red')); };
-    xhr.send(formData);
+    );
   });
 }
 
