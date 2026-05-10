@@ -1,0 +1,18 @@
+{
+  "name": "flashtech-arg",
+  "version": "1.0.0",
+  "description": "Flash Tech ARG - Apple Store Córdoba",
+  "main": "api/server.js",
+  "scripts": {
+    "start": "node api/server.js",
+    "dev": "node api/server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "mercadopago": "^2.0.6",
+    "cors": "^2.8.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
