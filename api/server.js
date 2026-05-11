@@ -16,8 +16,8 @@ const preference = new Preference(client);
 const payment = new Payment(client);
 
 // ── Config ──
-const GMAIL_USER          = process.env.GMAIL_USER;          // tu-email@gmail.com
-const GMAIL_APP_PASSWORD  = process.env.GMAIL_APP_PASSWORD;  // contraseña de aplicación de Google
+const GMAIL_USER          = process.env.GMAIL_USER;
+const GMAIL_APP_PASSWORD  = process.env.GMAIL_APP_PASSWORD;
 const ADMIN_EMAIL         = process.env.ADMIN_EMAIL || "valentingonzalezescritorio@gmail.com";
 const BASE_URL            = process.env.BASE_URL || "https://flash-tech-arg.vercel.app";
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
@@ -34,7 +34,7 @@ function crearTransporter() {
   });
 }
 
-// ── Guardar pedido en Firestore (REST API, sin SDK) ──
+// ── Guardar pedido en Firestore (REST API) ──
 async function guardarPedido(preferenceId, datos) {
   if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY) return;
   try {
@@ -78,6 +78,41 @@ async function leerPedido(preferenceId) {
   } catch (err) {
     console.error("Error leyendo pedido:", err);
     return null;
+  }
+}
+
+// ── Verificar si el pago ya fue procesado ──
+async function pagoYaProcesado(pagoId) {
+  if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY) return false;
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/pagos_procesados/${pagoId}?key=${FIREBASE_API_KEY}`;
+    const res = await fetch(url);
+    if (!res.ok) return false;
+    const data = await res.json();
+    return !!data.fields?.procesado?.booleanValue;
+  } catch {
+    return false;
+  }
+}
+
+// ── Marcar pago como procesado ──
+async function marcarPagoProcesado(pagoId) {
+  if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY) return;
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/pagos_procesados/${pagoId}?key=${FIREBASE_API_KEY}`;
+    await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fields: {
+          procesado: { booleanValue: true },
+          timestamp: { stringValue: new Date().toISOString() },
+        },
+      }),
+    });
+    console.log("🔒 Pago marcado como procesado:", pagoId);
+  } catch (err) {
+    console.error("Error marcando pago procesado:", err);
   }
 }
 
@@ -209,7 +244,6 @@ app.post("/api/crear-pago", async (req, res) => {
 
     const result = await preference.create({ body });
 
-    // Guardar comprador en Firestore para recuperarlo en el webhook
     if (comprador && result.id) {
       await guardarPedido(result.id, {
         ...comprador,
@@ -231,8 +265,6 @@ app.post("/api/webhook", async (req, res) => {
   console.log("BODY:", JSON.stringify(req.body));
   console.log("QUERY:", JSON.stringify(req.query));
 
-  // MercadoPago v1 (WebHook)  → body.type  + body.data.id
-  // MercadoPago v2 (Feed)     → query.topic + query.id
   const type   = req.body.type  || req.body.topic  || req.query.type  || req.query.topic;
   const dataId = req.body.data?.id || req.query["data.id"] || req.query.id || req.body.id;
 
@@ -245,10 +277,16 @@ app.post("/api/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
+    // ✅ Verificar duplicado ANTES de procesar
+    if (await pagoYaProcesado(dataId)) {
+      console.log("⚠️ Pago ya procesado, ignorando duplicado:", dataId);
+      return res.sendStatus(200);
+    }
+    await marcarPagoProcesado(dataId);
+
     console.log("🔍 Consultando pago en MP:", dataId);
     const pago = await payment.get({ id: dataId });
 
-    // preference_id puede venir undefined en Feed v2, usar external_reference como fallback
     const prefId = pago.preference_id || pago.external_reference;
     console.log("💳 Status:", pago.status, "| prefId:", prefId);
 
@@ -257,7 +295,6 @@ app.post("/api/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // Recuperar datos del comprador desde Firestore
     const comprador = await leerPedido(prefId);
     console.log("👤 Comprador Firestore:", JSON.stringify(comprador));
 
@@ -270,7 +307,6 @@ app.post("/api/webhook", async (req, res) => {
 
     console.log("📧 Destinatario cliente:", emailDst);
 
-    // Email al cliente
     if (emailDst) {
       await enviarEmail({
         to: emailDst,
@@ -282,7 +318,6 @@ app.post("/api/webhook", async (req, res) => {
       console.warn("⚠️ Sin email de destino para el cliente");
     }
 
-    // Email al admin
     await enviarEmail({
       to: ADMIN_EMAIL,
       subject: `⚡ Nueva venta ${producto}`,
@@ -295,7 +330,6 @@ app.post("/api/webhook", async (req, res) => {
     console.error(err);
   }
 
-  // 200 al final para que Vercel no corte la ejecución async
   return res.sendStatus(200);
 });
 
