@@ -95,10 +95,14 @@ async function enviarEmail({ to, subject, html }) {
       subject,
       html,
     });
-    console.log("📧 Email enviado:", info.messageId);
+    console.log("📧 Email enviado OK:", info.messageId);
+    console.log("📧 Respuesta SMTP:", JSON.stringify(info.response));
+    console.log("📧 Rechazados:", JSON.stringify(info.rejected));
+    console.log("📧 Aceptados:", JSON.stringify(info.accepted));
     return info;
   } catch (err) {
     console.error("❌ Error enviando email:", err.message);
+    console.error("❌ Error completo:", JSON.stringify(err));
   }
 }
 
