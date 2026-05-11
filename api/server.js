@@ -214,7 +214,7 @@ function templateAdmin({ nombre, email, telefono, producto, precio, referencia }
         <tr><td style="color:#888;font-size:13px;padding:5px 0;">Referencia</td><td style="color:#666;font-size:11px;font-family:monospace;">${referencia}</td></tr>
       </table>
       <div style="margin-top:20px;text-align:center;">
-        <a href="https://wa.me/549${(telefono || "").replace(/\D/g, "")}" style="background:#25D366;color:#fff;padding:10px 24px;font-weight:700;font-size:13px;text-decoration:none;border-radius:3px;display:inline-block;">Contactar por WhatsApp →</a>
+        <a href="https://wa.me/549${(telefono).replace(/\D/g, "")}" style="background:#25D366;color:#fff;padding:10px 24px;font-weight:700;font-size:13px;text-decoration:none;border-radius:3px;display:inline-block;">Contactar por WhatsApp →</a>
       </div>
     </td></tr>
   </table>
@@ -272,11 +272,6 @@ app.post("/api/webhook", async (req, res) => {
   console.log("DATA ID:", dataId);
 
   try {
-    if (type !== "payment" || !dataId) {
-      console.log("❌ Evento ignorado — tipo:", type, "| id:", dataId);
-      return res.sendStatus(200);
-    }
-
     // ✅ Verificar duplicado ANTES de procesar
     if (await pagoYaProcesado(dataId)) {
       console.log("⚠️ Pago ya procesado, ignorando duplicado:", dataId);
