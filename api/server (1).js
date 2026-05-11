@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const nodemailer = require("nodemailer");
 const { MercadoPagoConfig, Preference, Payment } = require("mercadopago");
 
 const app = express();
@@ -15,13 +16,25 @@ const preference = new Preference(client);
 const payment = new Payment(client);
 
 // ── Config ──
-const RESEND_API_KEY     = process.env.RESEND_API_KEY;
-const ADMIN_EMAIL        = process.env.ADMIN_EMAIL || "valentingonzalezescritorio@gmail.com";
-const BASE_URL           = process.env.BASE_URL || "https://flash-tech-arg.vercel.app";
+const GMAIL_USER          = process.env.GMAIL_USER;
+const GMAIL_APP_PASSWORD  = process.env.GMAIL_APP_PASSWORD;
+const ADMIN_EMAIL         = process.env.ADMIN_EMAIL || "valentingonzalezescritorio@gmail.com";
+const BASE_URL            = process.env.BASE_URL || "https://flash-tech-arg.vercel.app";
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
-const FIREBASE_API_KEY   = process.env.FIREBASE_API_KEY;
+const FIREBASE_API_KEY    = process.env.FIREBASE_API_KEY;
 
-// ── Guardar pedido en Firestore (REST API, sin SDK) ──
+// ── Transporter Nodemailer (Gmail) ──
+function crearTransporter() {
+  return nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: GMAIL_USER,
+      pass: GMAIL_APP_PASSWORD,
+    },
+  });
+}
+
+// ── Guardar pedido en Firestore (REST API) ──
 async function guardarPedido(preferenceId, datos) {
   if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY) return;
   try {
@@ -37,7 +50,7 @@ async function guardarPedido(preferenceId, datos) {
           producto:  { stringValue: datos.producto  || "" },
           precioUSD: { integerValue: datos.precioUSD || 0 },
           createdAt: { stringValue: new Date().toISOString() },
-        }
+        },
       }),
     });
     console.log("✅ Pedido guardado:", preferenceId);
@@ -48,7 +61,7 @@ async function guardarPedido(preferenceId, datos) {
 
 // ── Leer pedido de Firestore ──
 async function leerPedido(preferenceId) {
-  if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY) return null;
+  if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY || !preferenceId) return null;
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/pedidos/${preferenceId}?key=${FIREBASE_API_KEY}`;
     const res = await fetch(url);
@@ -68,28 +81,63 @@ async function leerPedido(preferenceId) {
   }
 }
 
-// ── Enviar email con Resend ──
-async function enviarEmail({ to, subject, html }) {
-  if (!RESEND_API_KEY) { console.warn("Sin RESEND_API_KEY"); return; }
+// ── Verificar si el pago ya fue procesado ──
+async function pagoYaProcesado(pagoId) {
+  if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY) return false;
   try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${RESEND_API_KEY}`,
-        "Content-Type": "application/json",
-      },
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/pagos_procesados/${pagoId}?key=${FIREBASE_API_KEY}`;
+    const res = await fetch(url);
+    if (!res.ok) return false;
+    const data = await res.json();
+    return !!data.fields?.procesado?.booleanValue;
+  } catch {
+    return false;
+  }
+}
+
+// ── Marcar pago como procesado ──
+async function marcarPagoProcesado(pagoId) {
+  if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY) return;
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/pagos_procesados/${pagoId}?key=${FIREBASE_API_KEY}`;
+    await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        from: "Flash Tech ARG <onboarding@resend.dev>",
-        to,
-        subject,
-        html,
+        fields: {
+          procesado: { booleanValue: true },
+          timestamp: { stringValue: new Date().toISOString() },
+        },
       }),
     });
-    const data = await res.json();
-    console.log("📧 Email enviado:", JSON.stringify(data));
-    return data;
+    console.log("🔒 Pago marcado como procesado:", pagoId);
   } catch (err) {
-    console.error("Error email:", err);
+    console.error("Error marcando pago procesado:", err);
+  }
+}
+
+// ── Enviar email con Nodemailer ──
+async function enviarEmail({ to, subject, html }) {
+  if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
+    console.warn("⚠️ Sin GMAIL_USER o GMAIL_APP_PASSWORD — email no enviado");
+    return;
+  }
+  try {
+    const transporter = crearTransporter();
+    const info = await transporter.sendMail({
+      from: `"Flash Tech ARG" <${GMAIL_USER}>`,
+      to,
+      subject,
+      html,
+    });
+    console.log("📧 Email enviado OK:", info.messageId);
+    console.log("📧 Respuesta SMTP:", JSON.stringify(info.response));
+    console.log("📧 Rechazados:", JSON.stringify(info.rejected));
+    console.log("📧 Aceptados:", JSON.stringify(info.accepted));
+    return info;
+  } catch (err) {
+    console.error("❌ Error enviando email:", err.message);
+    console.error("❌ Error completo:", JSON.stringify(err));
   }
 }
 
@@ -166,7 +214,7 @@ function templateAdmin({ nombre, email, telefono, producto, precio, referencia }
         <tr><td style="color:#888;font-size:13px;padding:5px 0;">Referencia</td><td style="color:#666;font-size:11px;font-family:monospace;">${referencia}</td></tr>
       </table>
       <div style="margin-top:20px;text-align:center;">
-        <a href="https://wa.me/549${(telefono||"").replace(/\D/g,"")}" style="background:#25D366;color:#fff;padding:10px 24px;font-weight:700;font-size:13px;text-decoration:none;border-radius:3px;display:inline-block;">Contactar por WhatsApp →</a>
+        <a href="https://wa.me/549${(telefono || "").replace(/\D/g, "")}" style="background:#25D366;color:#fff;padding:10px 24px;font-weight:700;font-size:13px;text-decoration:none;border-radius:3px;display:inline-block;">Contactar por WhatsApp →</a>
       </div>
     </td></tr>
   </table>
@@ -196,7 +244,6 @@ app.post("/api/crear-pago", async (req, res) => {
 
     const result = await preference.create({ body });
 
-    // Guardar comprador en Firestore para el webhook
     if (comprador && result.id) {
       await guardarPedido(result.id, {
         ...comprador,
@@ -214,53 +261,86 @@ app.post("/api/crear-pago", async (req, res) => {
 
 // ── WEBHOOK ──
 app.post("/api/webhook", async (req, res) => {
-  const { type, data } = req.body;
-  res.sendStatus(200);
+  console.log("📩 WEBHOOK RECIBIDO");
+  console.log("BODY:", JSON.stringify(req.body));
+  console.log("QUERY:", JSON.stringify(req.query));
 
-  if (type === "payment" && data?.id) {
-    try {
-      const pago = await payment.get({ id: data.id });
-      console.log("Webhook pago status:", pago.status, "preference:", pago.preference_id);
+  const type   = req.body.type  || req.body.topic  || req.query.type  || req.query.topic;
+  const dataId = req.body.data?.id || req.query["data.id"] || req.query.id || req.body.id;
 
-      if (pago.status === "approved") {
-        const comprador = await leerPedido(pago.preference_id);
-        const referencia = `FT-${pago.id}`;
+  console.log("TIPO:", type);
+  console.log("DATA ID:", dataId);
 
-        const nombre   = comprador?.nombre    || pago.payer?.first_name || "Cliente";
-        const emailDst = comprador?.email     || pago.payer?.email || "";
-        const telefono = comprador?.telefono  || "";
-        const producto = comprador?.producto  || "Producto Apple";
-        const precio   = comprador?.precioUSD || Math.round(pago.transaction_amount / 1200);
-
-        console.log(`📦 Enviando emails: cliente=${emailDst} admin=${ADMIN_EMAIL}`);
-
-        if (emailDst) {
-          await enviarEmail({
-            to: emailDst,
-            subject: "✅ Comprobante de compra — Flash Tech ARG",
-            html: templateCliente({ nombre, producto, precio, referencia }),
-          });
-        }
-
-        await enviarEmail({
-          to: ADMIN_EMAIL,
-          subject: `⚡ Nueva venta: ${producto} — USD ${precio}`,
-          html: templateAdmin({ nombre, email: emailDst, telefono, producto, precio, referencia }),
-        });
-      }
-    } catch (err) {
-      console.error("Error webhook:", err);
+  try {
+    if (type !== "payment" || !dataId) {
+      console.log("❌ Evento ignorado — tipo:", type, "| id:", dataId);
+      return res.sendStatus(200);
     }
+
+    // ✅ Verificar duplicado ANTES de procesar
+    if (await pagoYaProcesado(dataId)) {
+      console.log("⚠️ Pago ya procesado, ignorando duplicado:", dataId);
+      return res.sendStatus(200);
+    }
+    await marcarPagoProcesado(dataId);
+
+    console.log("🔍 Consultando pago en MP:", dataId);
+    const pago = await payment.get({ id: dataId });
+
+    const prefId = pago.preference_id || pago.external_reference;
+    console.log("💳 Status:", pago.status, "| prefId:", prefId);
+
+    if (pago.status !== "approved") {
+      console.log("⏳ Pago no aprobado, status:", pago.status);
+      return res.sendStatus(200);
+    }
+
+    const comprador = await leerPedido(prefId);
+    console.log("👤 Comprador Firestore:", JSON.stringify(comprador));
+
+    const referencia = `FT-${pago.id}`;
+    const nombre     = comprador?.nombre    || pago.payer?.first_name || "Cliente";
+    const emailDst   = comprador?.email     || pago.payer?.email      || "";
+    const telefono   = comprador?.telefono  || "";
+    const producto   = comprador?.producto  || "Producto Apple";
+    const precio     = comprador?.precioUSD || Math.round(pago.transaction_amount / 1200);
+
+    console.log("📧 Destinatario cliente:", emailDst);
+
+    if (emailDst) {
+      await enviarEmail({
+        to: emailDst,
+        subject: "✅ Compra confirmada — Flash Tech ARG",
+        html: templateCliente({ nombre, producto, precio, referencia }),
+      });
+      console.log("✅ Email cliente enviado");
+    } else {
+      console.warn("⚠️ Sin email de destino para el cliente");
+    }
+
+    await enviarEmail({
+      to: ADMIN_EMAIL,
+      subject: `⚡ Nueva venta ${producto}`,
+      html: templateAdmin({ nombre, email: emailDst, telefono, producto, precio, referencia }),
+    });
+    console.log("✅ Email admin enviado");
+
+  } catch (err) {
+    console.error("❌ ERROR WEBHOOK:", err.message);
+    console.error(err);
   }
+
+  return res.sendStatus(200);
 });
 
 // ── HEALTH ──
 app.get("/api/health", (req, res) => {
   res.json({
-    status: "ok",
-    tienda: "Flash Tech ARG",
+    status:   "ok",
+    tienda:   "Flash Tech ARG",
     mp:       process.env.MP_ACCESS_TOKEN ? "✅ OK" : "⚠️ Falta MP_ACCESS_TOKEN",
-    email:    RESEND_API_KEY              ? "✅ OK" : "⚠️ Falta RESEND_API_KEY",
+    email:    GMAIL_USER                  ? "✅ OK" : "⚠️ Falta GMAIL_USER",
+    password: GMAIL_APP_PASSWORD          ? "✅ OK" : "⚠️ Falta GMAIL_APP_PASSWORD",
     firebase: FIREBASE_PROJECT_ID         ? "✅ OK" : "⚠️ Falta FIREBASE_PROJECT_ID",
   });
 });
