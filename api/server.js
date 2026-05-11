@@ -1,5 +1,6 @@
 const express = require("express");
 const cors = require("cors");
+const nodemailer = require("nodemailer");
 const { MercadoPagoConfig, Preference, Payment } = require("mercadopago");
 
 const app = express();
@@ -15,11 +16,23 @@ const preference = new Preference(client);
 const payment = new Payment(client);
 
 // ── Config ──
-const RESEND_API_KEY      = process.env.RESEND_API_KEY;
+const GMAIL_USER          = process.env.GMAIL_USER;          // tu-email@gmail.com
+const GMAIL_APP_PASSWORD  = process.env.GMAIL_APP_PASSWORD;  // contraseña de aplicación de Google
 const ADMIN_EMAIL         = process.env.ADMIN_EMAIL || "valentingonzalezescritorio@gmail.com";
 const BASE_URL            = process.env.BASE_URL || "https://flash-tech-arg.vercel.app";
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
 const FIREBASE_API_KEY    = process.env.FIREBASE_API_KEY;
+
+// ── Transporter Nodemailer (Gmail) ──
+function crearTransporter() {
+  return nodemailer.createTransport({
+    service: "gmail",
+    auth: {
+      user: GMAIL_USER,
+      pass: GMAIL_APP_PASSWORD,
+    },
+  });
+}
 
 // ── Guardar pedido en Firestore (REST API, sin SDK) ──
 async function guardarPedido(preferenceId, datos) {
@@ -48,7 +61,7 @@ async function guardarPedido(preferenceId, datos) {
 
 // ── Leer pedido de Firestore ──
 async function leerPedido(preferenceId) {
-  if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY) return null;
+  if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY || !preferenceId) return null;
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/pedidos/${preferenceId}?key=${FIREBASE_API_KEY}`;
     const res = await fetch(url);
@@ -68,31 +81,24 @@ async function leerPedido(preferenceId) {
   }
 }
 
-// ── Enviar email con Resend ──
+// ── Enviar email con Nodemailer ──
 async function enviarEmail({ to, subject, html }) {
-  if (!RESEND_API_KEY) {
-    console.warn("⚠️ Sin RESEND_API_KEY — email no enviado");
+  if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
+    console.warn("⚠️ Sin GMAIL_USER o GMAIL_APP_PASSWORD — email no enviado");
     return;
   }
   try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${RESEND_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: "Flash Tech ARG <onboarding@resend.dev>",
-        to,
-        subject,
-        html,
-      }),
+    const transporter = crearTransporter();
+    const info = await transporter.sendMail({
+      from: `"Flash Tech ARG" <${GMAIL_USER}>`,
+      to,
+      subject,
+      html,
     });
-    const data = await res.json();
-    console.log("📧 Email enviado:", JSON.stringify(data));
-    return data;
+    console.log("📧 Email enviado:", info.messageId);
+    return info;
   } catch (err) {
-    console.error("Error email:", err);
+    console.error("❌ Error enviando email:", err.message);
   }
 }
 
@@ -216,16 +222,14 @@ app.post("/api/crear-pago", async (req, res) => {
 });
 
 // ── WEBHOOK ──
-// FIX: el 200 va AL FINAL para que Vercel no congele la función
-// antes de que terminen los awaits de email y Firestore.
 app.post("/api/webhook", async (req, res) => {
   console.log("📩 WEBHOOK RECIBIDO");
   console.log("BODY:", JSON.stringify(req.body));
   console.log("QUERY:", JSON.stringify(req.query));
 
   // MercadoPago v1 (WebHook)  → body.type  + body.data.id
-  // MercadoPago v2 (Feed)     → query.topic + query.id  (o body.data.id)
-  const type   = req.body.type   || req.body.topic  || req.query.type  || req.query.topic;
+  // MercadoPago v2 (Feed)     → query.topic + query.id
+  const type   = req.body.type  || req.body.topic  || req.query.type  || req.query.topic;
   const dataId = req.body.data?.id || req.query["data.id"] || req.query.id || req.body.id;
 
   console.log("TIPO:", type);
@@ -239,7 +243,10 @@ app.post("/api/webhook", async (req, res) => {
 
     console.log("🔍 Consultando pago en MP:", dataId);
     const pago = await payment.get({ id: dataId });
-    console.log("💳 Status:", pago.status, "| preference_id:", pago.preference_id);
+
+    // preference_id puede venir undefined en Feed v2, usar external_reference como fallback
+    const prefId = pago.preference_id || pago.external_reference;
+    console.log("💳 Status:", pago.status, "| prefId:", prefId);
 
     if (pago.status !== "approved") {
       console.log("⏳ Pago no aprobado, status:", pago.status);
@@ -247,7 +254,7 @@ app.post("/api/webhook", async (req, res) => {
     }
 
     // Recuperar datos del comprador desde Firestore
-    const comprador = await leerPedido(pago.preference_id);
+    const comprador = await leerPedido(prefId);
     console.log("👤 Comprador Firestore:", JSON.stringify(comprador));
 
     const referencia = `FT-${pago.id}`;
@@ -257,34 +264,34 @@ app.post("/api/webhook", async (req, res) => {
     const producto   = comprador?.producto  || "Producto Apple";
     const precio     = comprador?.precioUSD || Math.round(pago.transaction_amount / 1200);
 
-    console.log("📧 Destinatario:", emailDst);
+    console.log("📧 Destinatario cliente:", emailDst);
 
     // Email al cliente
     if (emailDst) {
-      const r1 = await enviarEmail({
+      await enviarEmail({
         to: emailDst,
         subject: "✅ Compra confirmada — Flash Tech ARG",
         html: templateCliente({ nombre, producto, precio, referencia }),
       });
-      console.log("✅ Email cliente:", JSON.stringify(r1));
+      console.log("✅ Email cliente enviado");
     } else {
       console.warn("⚠️ Sin email de destino para el cliente");
     }
 
     // Email al admin
-    const r2 = await enviarEmail({
+    await enviarEmail({
       to: ADMIN_EMAIL,
       subject: `⚡ Nueva venta ${producto}`,
       html: templateAdmin({ nombre, email: emailDst, telefono, producto, precio, referencia }),
     });
-    console.log("✅ Email admin:", JSON.stringify(r2));
+    console.log("✅ Email admin enviado");
 
   } catch (err) {
     console.error("❌ ERROR WEBHOOK:", err.message);
     console.error(err);
   }
 
-  // 200 siempre al final — evita que Vercel corte la ejecución async
+  // 200 al final para que Vercel no corte la ejecución async
   return res.sendStatus(200);
 });
 
@@ -294,7 +301,8 @@ app.get("/api/health", (req, res) => {
     status:   "ok",
     tienda:   "Flash Tech ARG",
     mp:       process.env.MP_ACCESS_TOKEN ? "✅ OK" : "⚠️ Falta MP_ACCESS_TOKEN",
-    email:    RESEND_API_KEY              ? "✅ OK" : "⚠️ Falta RESEND_API_KEY",
+    email:    GMAIL_USER                  ? "✅ OK" : "⚠️ Falta GMAIL_USER",
+    password: GMAIL_APP_PASSWORD          ? "✅ OK" : "⚠️ Falta GMAIL_APP_PASSWORD",
     firebase: FIREBASE_PROJECT_ID         ? "✅ OK" : "⚠️ Falta FIREBASE_PROJECT_ID",
   });
 });
