@@ -1,40 +1,109 @@
-const express = require("express");
-const cors = require("cors");
-const { MercadoPagoConfig, Preference, Payment } = require("mercadopago");
+// ── WEBHOOK ──
+app.post("/api/webhook", async (req, res) => {
+  console.log("📩 Webhook recibido");
+  console.log("BODY:", JSON.stringify(req.body));
+  console.log("QUERY:", JSON.stringify(req.query));
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-app.use(express.static("public"));
+  // Mercado Pago a veces manda datos por query
+  const type = req.body.type || req.query.topic;
+  const data = req.body.data || { id: req.query.id };
 
-// ── MercadoPago ──
-const client = new MercadoPagoConfig({
-  accessToken: process.env.MP_ACCESS_TOKEN || "",
-});
-const preference = new Preference(client);
-const payment = new Payment(client);
+  // responder rápido a MP
+  res.sendStatus(200);
 
-// ── Config ──
-const RESEND_API_KEY     = process.env.RESEND_API_KEY;
-const ADMIN_EMAIL        = process.env.ADMIN_EMAIL || "valentingonzalezescritorio@gmail.com";
-const BASE_URL           = process.env.BASE_URL || "https://flash-tech-arg.vercel.app";
-const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
-const FIREBASE_API_KEY   = process.env.FIREBASE_API_KEY;
-
-// ── Guardar pedido en Firestore (REST API, sin SDK) ──
-async function guardarPedido(preferenceId, datos) {
-  if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY) return;
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/pedidos/${preferenceId}?key=${FIREBASE_API_KEY}`;
-    await fetch(url, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fields: {
-          nombre:    { stringValue: datos.nombre    || "" },
-          email:     { stringValue: datos.email     || "" },
-          telefono:  { stringValue: datos.tel       || "" },
-          producto:  { stringValue: datos.producto  || "" },
+    // SOLO procesar pagos
+    if (type !== "payment" || !data?.id) {
+      console.log("⏭ Evento ignorado:", type);
+      return;
+    }
+
+    // obtener info del pago
+    const pago = await payment.get({ id: data.id });
+
+    console.log("💳 Pago obtenido:");
+    console.log({
+      status: pago.status,
+      id: pago.id,
+      preference: pago.preference_id,
+    });
+
+    // verificar aprobado
+    if (pago.status !== "approved") {
+      console.log("⏳ Pago no aprobado todavía");
+      return;
+    }
+
+    // leer comprador desde Firebase
+    const comprador = await leerPedido(pago.preference_id);
+
+    console.log("👤 Comprador:", comprador);
+
+    const referencia = `FT-${pago.id}`;
+
+    const nombre =
+      comprador?.nombre ||
+      pago.payer?.first_name ||
+      "Cliente";
+
+    const emailDst =
+      comprador?.email ||
+      pago.payer?.email ||
+      "";
+
+    const telefono =
+      comprador?.telefono ||
+      "";
+
+    const producto =
+      comprador?.producto ||
+      "Producto Apple";
+
+    const precio =
+      comprador?.precioUSD ||
+      Math.round(pago.transaction_amount / 1200);
+
+    console.log("📧 Enviando emails...");
+    console.log("Cliente:", emailDst);
+    console.log("Admin:", ADMIN_EMAIL);
+
+    // email cliente
+    if (emailDst) {
+      await enviarEmail({
+        to: emailDst,
+        subject: "✅ Comprobante de compra — Flash Tech ARG",
+        html: templateCliente({
+          nombre,
+          producto,
+          precio,
+          referencia,
+        }),
+      });
+
+      console.log("✅ Email cliente enviado");
+    }
+
+    // email admin
+    await enviarEmail({
+      to: ADMIN_EMAIL,
+      subject: `⚡ Nueva venta: ${producto} — USD ${precio}`,
+      html: templateAdmin({
+        nombre,
+        email: emailDst,
+        telefono,
+        producto,
+        precio,
+        referencia,
+      }),
+    });
+
+    console.log("✅ Email admin enviado");
+
+  } catch (err) {
+    console.error("❌ Error webhook:");
+    console.error(err);
+  }
+});          producto:  { stringValue: datos.producto  || "" },
           precioUSD: { integerValue: datos.precioUSD || 0 },
           createdAt: { stringValue: new Date().toISOString() },
         }
