@@ -214,62 +214,120 @@ app.post("/api/crear-pago", async (req, res) => {
 
 // ── WEBHOOK ──
 app.post("/api/webhook", async (req, res) => {
-  const { type, data } = req.body;
+
+  console.log("========== WEBHOOK ==========");
+  console.log("BODY:", JSON.stringify(req.body));
+  console.log("QUERY:", JSON.stringify(req.query));
+
+  // Mercado Pago puede mandar datos por body o query
+  const type = req.body.type || req.query.topic;
+  const data = req.body.data || { id: req.query.id };
+
+  console.log("TIPO:", type);
+  console.log("DATA ID:", data?.id);
+
+  // responder rápido a Mercado Pago
   res.sendStatus(200);
 
-  if (type === "payment" && data?.id) {
-    try {
-      const pago = await payment.get({ id: data.id });
-      console.log("Webhook pago status:", pago.status, "preference:", pago.preference_id);
+  try {
 
-      if (pago.status === "approved") {
-        const comprador = await leerPedido(pago.preference_id);
-        const referencia = `FT-${pago.id}`;
-
-        const nombre   = comprador?.nombre    || pago.payer?.first_name || "Cliente";
-        const emailDst = comprador?.email     || pago.payer?.email || "";
-        const telefono = comprador?.telefono  || "";
-        const producto = comprador?.producto  || "Producto Apple";
-        const precio   = comprador?.precioUSD || Math.round(pago.transaction_amount / 1200);
-
-        console.log(`📦 Enviando emails: cliente=${emailDst} admin=${ADMIN_EMAIL}`);
-
-        if (emailDst) {
-          await enviarEmail({
-            to: emailDst,
-            subject: "✅ Comprobante de compra — Flash Tech ARG",
-            html: templateCliente({ nombre, producto, precio, referencia }),
-          });
-        }
-
-        await enviarEmail({
-          to: ADMIN_EMAIL,
-          subject: `⚡ Nueva venta: ${producto} — USD ${precio}`,
-          html: templateAdmin({ nombre, email: emailDst, telefono, producto, precio, referencia }),
-        });
-      }
-    } catch (err) {
-      console.error("Error webhook:", err);
+    // ignorar eventos que no sean payment
+    if (type !== "payment" || !data?.id) {
+      console.log("❌ Evento ignorado");
+      return;
     }
-  }
-});
 
-// ── HEALTH ──
-app.get("/api/health", (req, res) => {
-  res.json({
-    status: "ok",
-    tienda: "Flash Tech ARG",
-    mp:       process.env.MP_ACCESS_TOKEN ? "✅ OK" : "⚠️ Falta MP_ACCESS_TOKEN",
-    email:    RESEND_API_KEY              ? "✅ OK" : "⚠️ Falta RESEND_API_KEY",
-    firebase: FIREBASE_PROJECT_ID         ? "✅ OK" : "⚠️ Falta FIREBASE_PROJECT_ID",
-  });
-});
+    console.log("✅ Evento payment detectado");
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Flash Tech ARG en http://localhost:${PORT}`));
-module.exports = app;    // leer comprador desde Firebase
+    // obtener pago
+    const pago = await payment.get({ id: data.id });
+
+    console.log("💳 Pago obtenido:");
+    console.log(JSON.stringify(pago, null, 2));
+
+    // verificar aprobado
+    if (pago.status !== "approved") {
+      console.log("⏳ Pago NO aprobado:", pago.status);
+      return;
+    }
+
+    console.log("✅ Pago aprobado");
+
+    // leer comprador desde Firebase
     const comprador = await leerPedido(pago.preference_id);
 
+    console.log("👤 Comprador encontrado:");
+    console.log(JSON.stringify(comprador, null, 2));
+
+    const referencia = `FT-${pago.id}`;
+
+    const nombre =
+      comprador?.nombre ||
+      pago.payer?.first_name ||
+      "Cliente";
+
+    const emailDst =
+      comprador?.email ||
+      pago.payer?.email ||
+      "";
+
+    const telefono =
+      comprador?.telefono ||
+      "";
+
+    const producto =
+      comprador?.producto ||
+      "Producto Apple";
+
+    const precio =
+      comprador?.precioUSD ||
+      Math.round(pago.transaction_amount / 1200);
+
+    console.log("📧 Intentando enviar email cliente");
+
+    // EMAIL CLIENTE
+    if (emailDst) {
+      await enviarEmail({
+        to: emailDst,
+        subject: "✅ Comprobante de compra — Flash Tech ARG",
+        html: templateCliente({
+          nombre,
+          producto,
+          precio,
+          referencia,
+        }),
+      });
+
+      console.log("✅ Email cliente enviado");
+    }
+
+    console.log("📧 Intentando enviar email admin");
+
+    // EMAIL ADMIN
+    await enviarEmail({
+      to: ADMIN_EMAIL,
+      subject: `⚡ Nueva venta: ${producto} — USD ${precio}`,
+      html: templateAdmin({
+        nombre,
+        email: emailDst,
+        telefono,
+        producto,
+        precio,
+        referencia,
+      }),
+    });
+
+    console.log("✅ Email admin enviado");
+
+    console.log("🎉 WEBHOOK TERMINADO OK");
+
+  } catch (err) {
+
+    console.log("🚨 ERROR EN WEBHOOK");
+    console.error(err);
+
+  }
+});
     console.log("👤 Comprador:", comprador);
 
     const referencia = `FT-${pago.id}`;
