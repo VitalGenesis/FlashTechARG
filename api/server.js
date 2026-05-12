@@ -44,18 +44,35 @@ async function guardarPedido(preferenceId, datos) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         fields: {
-          nombre:    { stringValue: datos.nombre    || "" },
-          email:     { stringValue: datos.email     || "" },
-          telefono:  { stringValue: datos.tel       || "" },
-          producto:  { stringValue: datos.producto  || "" },
-          precioUSD: { integerValue: datos.precioUSD || 0 },
-          createdAt: { stringValue: new Date().toISOString() },
+          nombre:       { stringValue: datos.nombre    || "" },
+          email:        { stringValue: datos.email     || "" },
+          telefono:     { stringValue: datos.tel       || "" },
+          producto:     { stringValue: datos.producto  || "" },
+          precioUSD:    { integerValue: datos.precioUSD || 0 },
+          createdAt:    { stringValue: new Date().toISOString() },
+          emailEnviado: { booleanValue: false },
         },
       }),
     });
     console.log("✅ Pedido guardado:", preferenceId);
   } catch (err) {
     console.error("Error guardando pedido:", err);
+  }
+}
+
+// ── Marcar email como enviado en Firestore (deduplicación) ──
+async function marcarEmailEnviado(preferenceId) {
+  if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY || !preferenceId) return;
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/pedidos/${preferenceId}?updateMask.fieldPaths=emailEnviado&key=${FIREBASE_API_KEY}`;
+    await fetch(url, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fields: { emailEnviado: { booleanValue: true } } }),
+    });
+    console.log("🔒 emailEnviado=true guardado para:", preferenceId);
+  } catch (err) {
+    console.error("Error marcando emailEnviado:", err);
   }
 }
 
@@ -69,11 +86,12 @@ async function leerPedido(preferenceId) {
     const data = await res.json();
     if (!data.fields) return null;
     return {
-      nombre:    data.fields.nombre?.stringValue    || "",
-      email:     data.fields.email?.stringValue     || "",
-      telefono:  data.fields.telefono?.stringValue  || "",
-      producto:  data.fields.producto?.stringValue  || "",
-      precioUSD: data.fields.precioUSD?.integerValue || 0,
+      nombre:       data.fields.nombre?.stringValue       || "",
+      email:        data.fields.email?.stringValue        || "",
+      telefono:     data.fields.telefono?.stringValue     || "",
+      producto:     data.fields.producto?.stringValue     || "",
+      precioUSD:    data.fields.precioUSD?.integerValue   || 0,
+      emailEnviado: data.fields.emailEnviado?.booleanValue ?? false,
     };
   } catch (err) {
     console.error("Error leyendo pedido:", err);
@@ -446,6 +464,16 @@ app.post("/api/webhook", async (req, res) => {
     const precio     = comprador?.precioUSD || Math.round(pago.transaction_amount / 1200);
 
     console.log("📧 Destinatario cliente:", emailDst);
+
+    // Deduplicacion: si ya se envió el email para este pago, ignorar
+    if (comprador?.emailEnviado) {
+      console.log("⏩ Email ya enviado para este pago — ignorando duplicado");
+      return res.sendStatus(200);
+    }
+
+    // Marcar como enviado ANTES de enviar (evita race condition entre webhooks simultáneos)
+    const claveFirestore = pago.external_reference || pago.preference_id;
+    if (claveFirestore) await marcarEmailEnviado(claveFirestore);
 
     // Email al cliente
     if (emailDst) {
