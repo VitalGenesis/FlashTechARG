@@ -16,8 +16,8 @@ const preference = new Preference(client);
 const payment = new Payment(client);
 
 // ── Config ──
-const GMAIL_USER          = process.env.GMAIL_USER;
-const GMAIL_APP_PASSWORD  = process.env.GMAIL_APP_PASSWORD;
+const GMAIL_USER          = process.env.GMAIL_USER;          // tu-email@gmail.com
+const GMAIL_APP_PASSWORD  = process.env.GMAIL_APP_PASSWORD;  // contraseña de aplicación de Google
 const ADMIN_EMAIL         = process.env.ADMIN_EMAIL || "valentingonzalezescritorio@gmail.com";
 const BASE_URL            = process.env.BASE_URL || "https://flash-tech-arg.vercel.app";
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
@@ -34,7 +34,7 @@ function crearTransporter() {
   });
 }
 
-// ── Guardar pedido en Firestore (REST API) ──
+// ── Guardar pedido en Firestore (REST API, sin SDK) ──
 async function guardarPedido(preferenceId, datos) {
   if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY) return;
   try {
@@ -81,41 +81,6 @@ async function leerPedido(preferenceId) {
   }
 }
 
-// ── Verificar si el pago ya fue procesado ──
-async function pagoYaProcesado(pagoId) {
-  if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY) return false;
-  try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/pagos_procesados/${pagoId}?key=${FIREBASE_API_KEY}`;
-    const res = await fetch(url);
-    if (!res.ok) return false;
-    const data = await res.json();
-    return !!data.fields?.procesado?.booleanValue;
-  } catch {
-    return false;
-  }
-}
-
-// ── Marcar pago como procesado ──
-async function marcarPagoProcesado(pagoId) {
-  if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY) return;
-  try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/pagos_procesados/${pagoId}?key=${FIREBASE_API_KEY}`;
-    await fetch(url, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fields: {
-          procesado: { booleanValue: true },
-          timestamp: { stringValue: new Date().toISOString() },
-        },
-      }),
-    });
-    console.log("🔒 Pago marcado como procesado:", pagoId);
-  } catch (err) {
-    console.error("Error marcando pago procesado:", err);
-  }
-}
-
 // ── Enviar email con Nodemailer ──
 async function enviarEmail({ to, subject, html }) {
   if (!GMAIL_USER || !GMAIL_APP_PASSWORD) {
@@ -143,82 +108,246 @@ async function enviarEmail({ to, subject, html }) {
 
 // ── Template CLIENTE ──
 function templateCliente({ nombre, producto, precio, referencia }) {
-  return `<!DOCTYPE html><html lang="es">
-  <body style="margin:0;padding:0;background:#f4f4f4;font-family:'Segoe UI',Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f4f4;padding:40px 0;">
-  <tr><td align="center">
-  <table width="600" cellpadding="0" cellspacing="0" style="background:#0a0a0a;border-radius:8px;overflow:hidden;max-width:600px;width:100%;">
-    <tr><td style="background:linear-gradient(135deg,#0d2200,#0a0a0a);padding:36px 40px;text-align:center;border-bottom:3px solid #7fff00;">
-      <div style="font-size:28px;font-weight:900;text-transform:uppercase;">
-        <span style="color:#fff;">Flash</span><span style="color:#7fff00;">Tech</span> <span style="color:#fff;">ARG</span>
-      </div>
-      <div style="color:#888;font-size:13px;margin-top:4px;letter-spacing:2px;text-transform:uppercase;">Apple Store · Córdoba</div>
-    </td></tr>
-    <tr><td style="background:#7fff00;padding:14px 40px;text-align:center;">
-      <span style="color:#000;font-weight:800;font-size:14px;letter-spacing:2px;text-transform:uppercase;">✅ PAGO CONFIRMADO</span>
-    </td></tr>
-    <tr><td style="padding:40px;">
-      <p style="color:#c8c8c8;font-size:16px;margin:0 0 16px;">Hola <strong style="color:#fff;">${nombre}</strong>,</p>
-      <p style="color:#c8c8c8;font-size:15px;line-height:1.6;margin:0 0 28px;">Tu pago fue procesado exitosamente. En menos de 1 hora te contactamos para coordinar la entrega.</p>
-      <table width="100%" cellpadding="0" cellspacing="0" style="background:#141414;border:1px solid rgba(127,255,0,.2);border-radius:4px;margin-bottom:28px;">
-        <tr><td style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.06);">
-          <span style="color:#7fff00;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;">Detalle del pedido</span>
-        </td></tr>
-        <tr><td style="padding:18px 20px;">
-          <table width="100%">
-            <tr><td style="color:#888;font-size:13px;padding-bottom:10px;">Producto</td><td style="color:#fff;font-weight:700;font-size:13px;text-align:right;padding-bottom:10px;">${producto}</td></tr>
-            <tr><td style="color:#888;font-size:13px;padding-bottom:10px;">Total pagado</td><td style="color:#7fff00;font-size:18px;font-weight:900;text-align:right;padding-bottom:10px;">USD ${precio}</td></tr>
-            <tr><td style="color:#888;font-size:13px;">N° referencia</td><td style="color:#666;font-size:11px;text-align:right;font-family:monospace;">${referencia}</td></tr>
-          </table>
-        </td></tr>
-      </table>
-      <table width="100%" cellpadding="0" cellspacing="0" style="background:#141414;border:1px solid rgba(127,255,0,.12);border-radius:4px;margin-bottom:28px;">
-        <tr><td style="padding:14px 20px;border-bottom:1px solid rgba(255,255,255,.06);">
-          <span style="color:#7fff00;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;">¿Qué sigue?</span>
-        </td></tr>
-        <tr><td style="padding:18px 20px;">
-          <p style="color:#c8c8c8;font-size:14px;margin:0 0 8px;">⚡ <strong style="color:#fff;">En menos de 1 hora</strong> te contactamos por WhatsApp.</p>
-          <p style="color:#c8c8c8;font-size:14px;margin:0 0 8px;">📦 <strong style="color:#fff;">Entrega en Córdoba Capital</strong> el mismo día.</p>
-          <p style="color:#c8c8c8;font-size:14px;margin:0;">🚚 <strong style="color:#fff;">Envíos al interior</strong> coordinados por correo.</p>
-        </td></tr>
-      </table>
-      <table width="100%"><tr><td align="center">
-        <a href="https://wa.me/5493512020116" style="display:inline-block;background:#25D366;color:#fff;padding:13px 30px;font-weight:800;font-size:14px;text-decoration:none;border-radius:3px;">💬 Escribinos por WhatsApp</a>
-      </td></tr></table>
-    </td></tr>
-    <tr><td style="background:#050505;padding:22px 40px;text-align:center;border-top:1px solid rgba(255,255,255,.06);">
-      <p style="color:#555;font-size:12px;margin:0 0 4px;">Flash Tech ARG · Córdoba Capital, Argentina</p>
-      <p style="color:#555;font-size:12px;margin:0;">📱 351 2020116 · 📸 @flashtech.arg</p>
-    </td></tr>
-  </table>
-  </td></tr></table>
-  </body></html>`;
+  const fecha = new Date().toLocaleDateString("es-AR", {
+    day: "numeric", month: "long", year: "numeric",
+    hour: "2-digit", minute: "2-digit", timeZone: "America/Argentina/Cordoba",
+  });
+  return `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Compra confirmada — Flash Tech ARG</title></head>
+<body style="margin:0;padding:0;background:#F0F2F5;font-family:'Segoe UI',Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#F0F2F5;padding:32px 16px;">
+<tr><td align="center">
+<table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.10);">
+
+  <!-- HEADER -->
+  <tr><td style="background:#0A0A0A;padding:24px 32px;text-align:center;">
+    <p style="margin:0;font-size:22px;font-weight:700;color:#fff;letter-spacing:1px;">
+      Flash<span style="color:#7FFF00;">Tech</span> ARG
+    </p>
+    <p style="margin:6px 0 0;font-size:10px;color:#888;letter-spacing:3px;text-transform:uppercase;">APPLE STORE · CÓRDOBA</p>
+  </td></tr>
+
+  <!-- BANNER CONFIRMADO -->
+  <tr><td style="background:#7FFF00;padding:11px 32px;text-align:center;">
+    <p style="margin:0;font-size:12px;font-weight:700;color:#0A0A0A;letter-spacing:2px;text-transform:uppercase;">
+      ✓ &nbsp;PAGO CONFIRMADO EXITOSAMENTE
+    </p>
+  </td></tr>
+
+  <!-- CUERPO -->
+  <tr><td style="background:#ffffff;padding:32px;">
+
+    <p style="margin:0 0 6px;font-size:18px;font-weight:600;color:#0A0A0A;">¡Hola, ${nombre}!</p>
+    <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#555555;">
+      Recibimos tu pago correctamente. Nuestro equipo te va a contactar
+      en menos de <strong style="color:#0A0A0A;">1 hora</strong> para coordinar la entrega.
+    </p>
+
+    <!-- Detalle del pedido -->
+    <table width="100%" cellpadding="0" cellspacing="0"
+      style="background:#FAFAFA;border:1px solid #E8E8E8;border-radius:8px;margin-bottom:20px;overflow:hidden;">
+      <tr><td style="padding:12px 16px;border-bottom:1px solid #E8E8E8;">
+        <p style="margin:0;font-size:10px;font-weight:700;color:#5EC600;letter-spacing:2px;text-transform:uppercase;">DETALLE DEL PEDIDO</p>
+      </td></tr>
+      <tr><td style="padding:16px;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td style="font-size:13px;color:#888;padding:6px 0;border-bottom:1px solid #F5F5F5;">Producto</td>
+            <td style="font-size:13px;font-weight:600;color:#0A0A0A;text-align:right;padding:6px 0;border-bottom:1px solid #F5F5F5;">${producto}</td>
+          </tr>
+          <tr>
+            <td style="font-size:13px;color:#888;padding:6px 0;border-bottom:1px solid #F5F5F5;">Total pagado</td>
+            <td style="font-size:20px;font-weight:700;color:#3D9900;text-align:right;padding:6px 0;border-bottom:1px solid #F5F5F5;">USD ${precio}</td>
+          </tr>
+          <tr>
+            <td style="font-size:13px;color:#888;padding:6px 0;border-bottom:1px solid #F5F5F5;">Fecha</td>
+            <td style="font-size:13px;color:#555;text-align:right;padding:6px 0;border-bottom:1px solid #F5F5F5;">${fecha}</td>
+          </tr>
+          <tr>
+            <td style="font-size:13px;color:#888;padding:6px 0;">N° referencia</td>
+            <td style="font-size:11px;color:#999;text-align:right;padding:6px 0;font-family:monospace;">${referencia}</td>
+          </tr>
+        </table>
+      </td></tr>
+    </table>
+
+    <!-- Próximos pasos -->
+    <table width="100%" cellpadding="0" cellspacing="0"
+      style="background:#F6FFF0;border:1px solid #D4EFC0;border-radius:8px;margin-bottom:24px;overflow:hidden;">
+      <tr><td style="padding:12px 16px;border-bottom:1px solid #D4EFC0;">
+        <p style="margin:0;font-size:10px;font-weight:700;color:#3D7A00;letter-spacing:2px;text-transform:uppercase;">¿QUÉ PASA AHORA?</p>
+      </td></tr>
+      <tr><td style="padding:16px;">
+        <table width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td width="28" valign="top" style="font-size:16px;padding:5px 0;">⚡</td>
+            <td style="font-size:13px;line-height:1.5;color:#0A0A0A;padding:5px 0;">
+              <strong>En menos de 1 hora</strong> te contactamos por WhatsApp al número que registraste.
+            </td>
+          </tr>
+          <tr>
+            <td width="28" valign="top" style="font-size:16px;padding:5px 0;">📦</td>
+            <td style="font-size:13px;line-height:1.5;color:#0A0A0A;padding:5px 0;">
+              <strong>Entrega en Córdoba Capital</strong> el mismo día. Acordamos horario y punto de encuentro.
+            </td>
+          </tr>
+          <tr>
+            <td width="28" valign="top" style="font-size:16px;padding:5px 0;">🚚</td>
+            <td style="font-size:13px;line-height:1.5;color:#0A0A0A;padding:5px 0;">
+              <strong>Envíos al interior</strong> del país coordinados por correo o moto.
+            </td>
+          </tr>
+        </table>
+      </td></tr>
+    </table>
+
+    <!-- CTA WhatsApp -->
+    <table width="100%" cellpadding="0" cellspacing="0"><tr><td align="center">
+      <a href="https://wa.me/5493512020116"
+        style="display:inline-block;background:#25D366;color:#ffffff;text-decoration:none;
+          padding:13px 32px;border-radius:8px;font-size:13px;font-weight:700;">
+        💬 &nbsp;Escribinos por WhatsApp
+      </a>
+    </td></tr></table>
+
+  </td></tr>
+
+  <!-- FOOTER -->
+  <tr><td style="background:#F8F8F8;border-top:1px solid #E8E8E8;padding:18px 32px;text-align:center;">
+    <p style="margin:0 0 3px;font-size:11px;color:#999;">Flash Tech ARG · Córdoba Capital, Argentina</p>
+    <p style="margin:0;font-size:11px;color:#999;">📱 351 2020116 &nbsp;·&nbsp; 📸 @flashtech.arg</p>
+  </td></tr>
+
+</table>
+</td></tr></table>
+</body></html>`;
 }
 
 // ── Template ADMIN ──
 function templateAdmin({ nombre, email, telefono, producto, precio, referencia }) {
-  return `<!DOCTYPE html><html lang="es">
-  <body style="margin:0;padding:20px;background:#f4f4f4;font-family:'Segoe UI',Arial,sans-serif;">
-  <table width="100%" style="max-width:500px;margin:0 auto;background:#0a0a0a;border:2px solid #7fff00;border-radius:8px;overflow:hidden;">
-    <tr><td style="background:#7fff00;padding:14px 24px;">
-      <strong style="color:#000;font-size:16px;">⚡ NUEVA VENTA — Flash Tech ARG</strong>
-    </td></tr>
-    <tr><td style="padding:24px;">
-      <table width="100%">
-        <tr><td style="color:#888;font-size:13px;padding:5px 0;">Producto</td><td style="color:#fff;font-weight:700;font-size:13px;">${producto}</td></tr>
-        <tr><td style="color:#888;font-size:13px;padding:5px 0;">Precio</td><td style="color:#7fff00;font-weight:900;font-size:16px;">USD ${precio}</td></tr>
-        <tr><td colspan="2" style="padding:12px 0 6px;color:#7fff00;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;border-top:1px solid rgba(255,255,255,.08);margin-top:8px;">Comprador</td></tr>
-        <tr><td style="color:#888;font-size:13px;padding:5px 0;">Nombre</td><td style="color:#fff;font-size:13px;">${nombre}</td></tr>
-        <tr><td style="color:#888;font-size:13px;padding:5px 0;">Email</td><td style="color:#fff;font-size:13px;">${email}</td></tr>
-        <tr><td style="color:#888;font-size:13px;padding:5px 0;">Teléfono</td><td style="color:#fff;font-size:13px;">${telefono || "No ingresado"}</td></tr>
-        <tr><td style="color:#888;font-size:13px;padding:5px 0;">Referencia</td><td style="color:#666;font-size:11px;font-family:monospace;">${referencia}</td></tr>
-      </table>
-      <div style="margin-top:20px;text-align:center;">
-        <a href="https://wa.me/549${(telefono || "").replace(/\D/g, "")}" style="background:#25D366;color:#fff;padding:10px 24px;font-weight:700;font-size:13px;text-decoration:none;border-radius:3px;display:inline-block;">Contactar por WhatsApp →</a>
-      </div>
-    </td></tr>
-  </table>
-  </body></html>`;
+  const fecha = new Date().toLocaleDateString("es-AR", {
+    day: "numeric", month: "long", year: "numeric",
+    hour: "2-digit", minute: "2-digit", timeZone: "America/Argentina/Cordoba",
+  });
+  const waLink = `https://wa.me/549${(telefono || "").replace(/\D/g, "")}`;
+  const mailLink = `mailto:${email}`;
+  return `<!DOCTYPE html>
+<html lang="es">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Nueva venta — Flash Tech ARG</title></head>
+<body style="margin:0;padding:0;background:#F0F2F5;font-family:'Segoe UI',Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#F0F2F5;padding:32px 16px;">
+<tr><td align="center">
+<table width="100%" cellpadding="0" cellspacing="0" style="max-width:540px;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.10);">
+
+  <!-- HEADER -->
+  <tr><td style="background:#0A0A0A;padding:18px 28px;">
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td>
+        <p style="margin:0;font-size:16px;font-weight:700;color:#fff;letter-spacing:1px;">
+          Flash<span style="color:#7FFF00;">Tech</span> ARG
+        </p>
+        <p style="margin:3px 0 0;font-size:10px;color:#888;letter-spacing:2px;text-transform:uppercase;">PANEL DE VENTAS</p>
+      </td>
+      <td align="right">
+        <span style="display:inline-block;background:#7FFF00;color:#0A0A0A;font-size:10px;font-weight:700;
+          padding:5px 13px;border-radius:20px;letter-spacing:1px;white-space:nowrap;">⚡ NUEVA VENTA</span>
+      </td>
+    </tr></table>
+  </td></tr>
+
+  <!-- CUERPO -->
+  <tr><td style="background:#ffffff;padding:28px;">
+
+    <!-- Producto vendido -->
+    <table width="100%" cellpadding="0" cellspacing="0"
+      style="background:#F6FFF0;border:1px solid #C8E8A0;border-radius:8px;margin-bottom:20px;">
+      <tr><td style="padding:16px;">
+        <p style="margin:0 0 3px;font-size:10px;font-weight:700;color:#3D7A00;letter-spacing:2px;text-transform:uppercase;">PRODUCTO VENDIDO</p>
+        <p style="margin:0;font-size:18px;font-weight:700;color:#0A0A0A;">${producto}</p>
+        <p style="margin:4px 0 0;font-size:22px;font-weight:700;color:#3D9900;">USD ${precio}</p>
+      </td></tr>
+    </table>
+
+    <!-- Label comprador -->
+    <p style="margin:0 0 10px;font-size:10px;font-weight:700;color:#888;letter-spacing:2px;text-transform:uppercase;">DATOS DEL COMPRADOR</p>
+
+    <!-- Tabla datos -->
+    <table width="100%" cellpadding="0" cellspacing="0"
+      style="border:1px solid #E8E8E8;border-radius:8px;overflow:hidden;margin-bottom:20px;">
+      <tr style="border-bottom:1px solid #F0F0F0;">
+        <td width="38%" style="padding:11px 14px;background:#FAFAFA;">
+          <p style="margin:0;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;">Nombre</p>
+        </td>
+        <td style="padding:11px 14px;">
+          <p style="margin:0;font-size:13px;font-weight:600;color:#0A0A0A;">${nombre}</p>
+        </td>
+      </tr>
+      <tr style="border-bottom:1px solid #F0F0F0;">
+        <td width="38%" style="padding:11px 14px;background:#FAFAFA;">
+          <p style="margin:0;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;">Email</p>
+        </td>
+        <td style="padding:11px 14px;">
+          <a href="${mailLink}" style="font-size:13px;color:#0066CC;text-decoration:none;">${email}</a>
+        </td>
+      </tr>
+      <tr style="border-bottom:1px solid #F0F0F0;">
+        <td width="38%" style="padding:11px 14px;background:#FAFAFA;">
+          <p style="margin:0;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;">Teléfono</p>
+        </td>
+        <td style="padding:11px 14px;">
+          <p style="margin:0;font-size:13px;color:#0A0A0A;">${telefono || "No ingresado"}</p>
+        </td>
+      </tr>
+      <tr style="border-bottom:1px solid #F0F0F0;">
+        <td width="38%" style="padding:11px 14px;background:#FAFAFA;">
+          <p style="margin:0;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;">Fecha y hora</p>
+        </td>
+        <td style="padding:11px 14px;">
+          <p style="margin:0;font-size:13px;color:#0A0A0A;">${fecha}</p>
+        </td>
+      </tr>
+      <tr>
+        <td width="38%" style="padding:11px 14px;background:#FAFAFA;">
+          <p style="margin:0;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;">Referencia MP</p>
+        </td>
+        <td style="padding:11px 14px;">
+          <p style="margin:0;font-size:11px;color:#999;font-family:monospace;">${referencia}</p>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Acciones rápidas -->
+    <p style="margin:0 0 10px;font-size:10px;font-weight:700;color:#888;letter-spacing:2px;text-transform:uppercase;">ACCIONES RÁPIDAS</p>
+    <table width="100%" cellpadding="0" cellspacing="0"><tr>
+      <td width="49%" style="padding-right:5px;">
+        <a href="${waLink}"
+          style="display:block;text-align:center;background:#25D366;color:#ffffff;text-decoration:none;
+            padding:12px;border-radius:8px;font-size:12px;font-weight:700;">
+          💬 WhatsApp al cliente
+        </a>
+      </td>
+      <td width="49%" style="padding-left:5px;">
+        <a href="${mailLink}"
+          style="display:block;text-align:center;background:#0A0A0A;color:#ffffff;text-decoration:none;
+            padding:12px;border-radius:8px;font-size:12px;font-weight:700;">
+          ✉️ Responder por email
+        </a>
+      </td>
+    </tr></table>
+
+  </td></tr>
+
+  <!-- FOOTER -->
+  <tr><td style="background:#F8F8F8;border-top:1px solid #E8E8E8;padding:16px 28px;text-align:center;">
+    <p style="margin:0;font-size:11px;color:#BBB;">Flash Tech ARG · Panel interno · No reenviar</p>
+  </td></tr>
+
+</table>
+</td></tr></table>
+</body></html>`;
 }
 
 // ── CREAR PAGO ──
@@ -244,6 +373,7 @@ app.post("/api/crear-pago", async (req, res) => {
 
     const result = await preference.create({ body });
 
+    // Guardar comprador en Firestore para recuperarlo en el webhook
     if (comprador && result.id) {
       await guardarPedido(result.id, {
         ...comprador,
@@ -265,6 +395,8 @@ app.post("/api/webhook", async (req, res) => {
   console.log("BODY:", JSON.stringify(req.body));
   console.log("QUERY:", JSON.stringify(req.query));
 
+  // MercadoPago v1 (WebHook)  → body.type  + body.data.id
+  // MercadoPago v2 (Feed)     → query.topic + query.id
   const type   = req.body.type  || req.body.topic  || req.query.type  || req.query.topic;
   const dataId = req.body.data?.id || req.query["data.id"] || req.query.id || req.body.id;
 
@@ -277,16 +409,10 @@ app.post("/api/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    // ✅ Verificar duplicado ANTES de procesar
-    if (await pagoYaProcesado(dataId)) {
-      console.log("⚠️ Pago ya procesado, ignorando duplicado:", dataId);
-      return res.sendStatus(200);
-    }
-    await marcarPagoProcesado(dataId);
-
     console.log("🔍 Consultando pago en MP:", dataId);
     const pago = await payment.get({ id: dataId });
 
+    // preference_id puede venir undefined en Feed v2, usar external_reference como fallback
     const prefId = pago.preference_id || pago.external_reference;
     console.log("💳 Status:", pago.status, "| prefId:", prefId);
 
@@ -295,6 +421,7 @@ app.post("/api/webhook", async (req, res) => {
       return res.sendStatus(200);
     }
 
+    // Recuperar datos del comprador desde Firestore
     const comprador = await leerPedido(prefId);
     console.log("👤 Comprador Firestore:", JSON.stringify(comprador));
 
@@ -307,6 +434,7 @@ app.post("/api/webhook", async (req, res) => {
 
     console.log("📧 Destinatario cliente:", emailDst);
 
+    // Email al cliente
     if (emailDst) {
       await enviarEmail({
         to: emailDst,
@@ -318,6 +446,7 @@ app.post("/api/webhook", async (req, res) => {
       console.warn("⚠️ Sin email de destino para el cliente");
     }
 
+    // Email al admin
     await enviarEmail({
       to: ADMIN_EMAIL,
       subject: `⚡ Nueva venta ${producto}`,
@@ -330,6 +459,7 @@ app.post("/api/webhook", async (req, res) => {
     console.error(err);
   }
 
+  // 200 al final para que Vercel no corte la ejecución async
   return res.sendStatus(200);
 });
 
