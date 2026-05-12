@@ -373,13 +373,17 @@ app.post("/api/crear-pago", async (req, res) => {
 
     const result = await preference.create({ body });
 
-    // Guardar comprador en Firestore para recuperarlo en el webhook
+    // Guardar bajo AMBAS claves: preference.id y external_reference
+    // El webhook puede recibir cualquiera de las dos dependiendo de la version de MP
     if (comprador && result.id) {
-      await guardarPedido(result.id, {
+      const datosPedido = {
         ...comprador,
         producto,
         precioUSD: Math.round(Number(precio) / 1200),
-      });
+      };
+      await guardarPedido(result.id, datosPedido);
+      await guardarPedido(body.external_reference, datosPedido);
+      console.log('✅ Pedido guardado bajo:', result.id, 'y', body.external_reference);
     }
 
     res.json({ id: result.id, init_point: result.init_point });
@@ -422,7 +426,16 @@ app.post("/api/webhook", async (req, res) => {
     }
 
     // Recuperar datos del comprador desde Firestore
-    const comprador = await leerPedido(prefId);
+    // Intentar con preference_id primero, luego con external_reference como fallback
+    let comprador = await leerPedido(prefId);
+    if (!comprador && pago.external_reference && pago.external_reference !== prefId) {
+      console.log("🔄 Reintentando con external_reference:", pago.external_reference);
+      comprador = await leerPedido(pago.external_reference);
+    }
+    if (!comprador && pago.preference_id && pago.preference_id !== prefId) {
+      console.log("🔄 Reintentando con preference_id:", pago.preference_id);
+      comprador = await leerPedido(pago.preference_id);
+    }
     console.log("👤 Comprador Firestore:", JSON.stringify(comprador));
 
     const referencia = `FT-${pago.id}`;
