@@ -60,19 +60,27 @@ async function guardarPedido(preferenceId, datos) {
   }
 }
 
-// ── Marcar email como enviado en Firestore (deduplicación) ──
-async function marcarEmailEnviado(preferenceId) {
-  if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY || !preferenceId) return;
+// ── Deduplicación atómica por payment.id ──
+// Intenta crear el documento. Si ya existe (HTTP 409) → ya fue procesado → devuelve false.
+// Firestore garantiza atomicidad: solo una escritura gana aunque lleguen 2 webhooks a la vez.
+async function registrarPagoUnico(paymentId) {
+  if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY || !paymentId) return true; // sin Firebase, dejar pasar
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/pedidos/${preferenceId}?updateMask.fieldPaths=emailEnviado&key=${FIREBASE_API_KEY}`;
-    await fetch(url, {
-      method: "PATCH",
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/pagos_procesados?documentId=${paymentId}&key=${FIREBASE_API_KEY}`;
+    const res = await fetch(url, {
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fields: { emailEnviado: { booleanValue: true } } }),
+      body: JSON.stringify({ fields: { procesadoEn: { stringValue: new Date().toISOString() } } }),
     });
-    console.log("🔒 emailEnviado=true guardado para:", preferenceId);
+    if (res.status === 409) {
+      console.log("⏩ Payment", paymentId, "ya procesado (409) — ignorando duplicado");
+      return false; // ya existe, no procesar
+    }
+    console.log("🔑 Payment", paymentId, "registrado como nuevo");
+    return true; // nuevo, procesar
   } catch (err) {
-    console.error("Error marcando emailEnviado:", err);
+    console.error("Error en registrarPagoUnico:", err);
+    return true; // ante error, dejar pasar para no perder ventas
   }
 }
 
@@ -465,15 +473,10 @@ app.post("/api/webhook", async (req, res) => {
 
     console.log("📧 Destinatario cliente:", emailDst);
 
-    // Deduplicacion: si ya se envió el email para este pago, ignorar
-    if (comprador?.emailEnviado) {
-      console.log("⏩ Email ya enviado para este pago — ignorando duplicado");
-      return res.sendStatus(200);
-    }
-
-    // Marcar como enviado ANTES de enviar (evita race condition entre webhooks simultáneos)
-    const claveFirestore = pago.external_reference || pago.preference_id;
-    if (claveFirestore) await marcarEmailEnviado(claveFirestore);
+    // Deduplicación atómica: registrar el payment.id en Firestore
+    // Si ya existe (otro webhook lo registró antes) → ignorar
+    const esNuevo = await registrarPagoUnico(String(pago.id));
+    if (!esNuevo) return res.sendStatus(200);
 
     // Email al cliente
     if (emailDst) {
