@@ -38,8 +38,9 @@ function crearTransporter() {
 async function guardarPedido(preferenceId, datos) {
   if (!FIREBASE_PROJECT_ID || !FIREBASE_API_KEY) return;
   try {
+    console.log("💾 Guardando pedido. ID:", preferenceId, "| email:", datos.email, "| nombre:", datos.nombre);
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/pedidos/${preferenceId}?key=${FIREBASE_API_KEY}`;
-    await fetch(url, {
+    const res = await fetch(url, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -54,7 +55,12 @@ async function guardarPedido(preferenceId, datos) {
         },
       }),
     });
-    console.log("✅ Pedido guardado:", preferenceId);
+    if (!res.ok) {
+      const errorBody = await res.text();
+      console.error("❌ Firestore rechazó el pedido. Status:", res.status, "| Error:", errorBody);
+    } else {
+      console.log("✅ Pedido guardado OK en Firestore:", preferenceId);
+    }
   } catch (err) {
     console.error("Error guardando pedido:", err);
   }
@@ -398,6 +404,8 @@ app.post("/api/crear-pago", async (req, res) => {
     };
 
     const result = await preference.create({ body });
+
+    console.log("📦 Comprador recibido en /crear-pago:", JSON.stringify(comprador));
 
     // Guardar bajo AMBAS claves: preference.id y external_reference
     // El webhook puede recibir cualquiera de las dos dependiendo de la version de MP
