@@ -427,6 +427,80 @@ app.post("/api/crear-pago", async (req, res) => {
   }
 });
 
+// ── SIMULAR COMPRA (ADMIN) ──
+app.post("/api/simular-compra", async (req, res) => {
+  try {
+    const {
+      nombre,
+      email,
+      telefono,
+      producto,
+      precioUSD
+    } = req.body;
+
+    if (!nombre || !email || !producto || !precioUSD) {
+      return res.status(400).json({
+        error: "Faltan datos"
+      });
+    }
+
+    // Referencia fake estilo MP
+    const referencia = `ADMIN-${Date.now()}`;
+
+    // Guardar pedido en Firestore
+    await guardarPedido(referencia, {
+      nombre,
+      email,
+      tel: telefono || "",
+      producto,
+      precioUSD
+    });
+
+    console.log("🧪 Compra simulada:", referencia);
+
+    // EMAIL CLIENTE
+    await enviarEmail({
+      to: email,
+      subject: "✅ Compra confirmada — Flash Tech ARG",
+      html: templateCliente({
+        nombre,
+        producto,
+        precio: precioUSD,
+        referencia
+      }),
+    });
+
+    console.log("✅ Email cliente enviado");
+
+    // EMAIL ADMIN
+    await enviarEmail({
+      to: ADMIN_EMAIL,
+      subject: `🧪 Venta simulada ${producto}`,
+      html: templateAdmin({
+        nombre,
+        email,
+        telefono,
+        producto,
+        precio: precioUSD,
+        referencia
+      }),
+    });
+
+    console.log("✅ Email admin enviado");
+
+    res.json({
+      ok: true,
+      referencia
+    });
+
+  } catch (err) {
+    console.error("❌ ERROR SIMULANDO COMPRA:", err);
+    res.status(500).json({
+      error: err.message
+    });
+  }
+});
+
 // ── WEBHOOK ──
 app.post("/api/webhook", async (req, res) => {
   console.log("📩 WEBHOOK RECIBIDO");
