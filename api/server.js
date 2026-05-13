@@ -48,7 +48,7 @@ async function guardarPedido(preferenceId, datos) {
           email:        { stringValue: datos.email     || "" },
           telefono:     { stringValue: datos.tel       || "" },
           producto:     { stringValue: datos.producto  || "" },
-          precioUSD:    { integerValue: datos.precioUSD || 0 },
+          precioUSD:    { stringValue: String(datos.precioUSD || 0) },
           createdAt:    { stringValue: new Date().toISOString() },
           emailEnviado: { booleanValue: false },
         },
@@ -98,7 +98,7 @@ async function leerPedido(preferenceId) {
       email:        data.fields.email?.stringValue        || "",
       telefono:     data.fields.telefono?.stringValue     || "",
       producto:     data.fields.producto?.stringValue     || "",
-      precioUSD:    data.fields.precioUSD?.integerValue   || 0,
+      precioUSD:    Number(data.fields.precioUSD?.stringValue || data.fields.precioUSD?.integerValue || 0),
       emailEnviado: data.fields.emailEnviado?.booleanValue ?? false,
     };
   } catch (err) {
