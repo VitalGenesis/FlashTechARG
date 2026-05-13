@@ -463,13 +463,25 @@ app.post("/api/webhook", async (req, res) => {
       comprador = await leerPedido(pago.preference_id);
     }
     console.log("👤 Comprador Firestore:", JSON.stringify(comprador));
+    console.log("🔑 prefId usado:", prefId);
+    console.log("🔑 external_reference del pago:", pago.external_reference);
+    console.log("🔑 preference_id del pago:", pago.preference_id);
 
-    const referencia = `FT-${pago.id}`;
+    // ── FIX 1: usar external_reference del pago como referencia legible ──
+    // Antes: `FT-${pago.id}` usaba el ID numérico interno de MP
+    const referencia = pago.external_reference || `FT-${pago.id}`;
+
     const nombre     = comprador?.nombre    || pago.payer?.first_name || "Cliente";
-    const emailDst   = comprador?.email     || pago.payer?.email      || "";
+    // ── FIX 2: NUNCA usar pago.payer.email — es el email de la cuenta MP del pagador,
+    //    no el email que el cliente escribió en el formulario ──
+    const emailDst   = comprador?.email     || "";
     const telefono   = comprador?.telefono  || "";
     const producto   = comprador?.producto  || "Producto Apple";
     const precio     = comprador?.precioUSD || Math.round(pago.transaction_amount / 1200);
+
+    if (!comprador) {
+      console.warn("⚠️ No se encontró el pedido en Firestore — los datos del admin estarán incompletos");
+    }
 
     console.log("📧 Destinatario cliente:", emailDst);
 
