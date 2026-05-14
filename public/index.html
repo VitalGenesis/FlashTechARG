@@ -162,6 +162,14 @@ footer{background:#050505;border-top:1px solid rgba(127,255,0,.11);padding:42px 
         <div class="fg"><label>Teléfono</label><input id="ft" type="tel" placeholder="351 123 4567"></div>
         <div class="fg"><label>DNI</label><input id="fd" type="text" placeholder="32123456"></div>
       </div>
+      <div class="fg">
+        <label>Dirección de entrega *</label>
+        <input id="fdir" type="text" placeholder="Av. Colón 1234, Córdoba" autocomplete="off">
+        <input type="hidden" id="fdir-lat">
+        <input type="hidden" id="fdir-lng">
+        <input type="hidden" id="fdir-url">
+        <div id="fdir-status" style="font-size:.75rem;margin-top:4px;color:#7fff00;display:none;">📍 Dirección verificada</div>
+      </div>
       <div class="dv"><span>Elegí cómo pagar</span></div>
       <div class="pos">
         <label class="po sel" onclick="selPay(this,'mp')"><input type="radio" name="pay" value="mp" checked><div class="po-ico">💙</div><div><div class="po-nm">MercadoPago</div><div class="po-ds">Tarjeta · débito · CVU · efectivo Rapipago</div></div></label>
@@ -382,7 +390,10 @@ window.pagar = async function() {
   }
   btn.disabled=true; btn.classList.add('loading'); txt.textContent='Procesando...';
   try {
-    const res=await fetch('/api/crear-pago',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({producto:P.nm,precio:P.pr*TC,cantidad:1,comprador:{nombre:fn,email:fe,tel:ft}})});
+    const fdir=document.getElementById('fdir').value.trim();
+    const fdirUrl=document.getElementById('fdir-url').value;
+    if(!fdir){alert('Por favor ingresá la dirección de entrega.');btn.disabled=false;btn.classList.remove('loading');txt.textContent='⚡ Confirmar compra';return;}
+    const res=await fetch('/api/crear-pago',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({producto:P.nm,precio:P.pr*TC,cantidad:1,comprador:{nombre:fn,email:fe,tel:ft,dni:document.getElementById('fd').value.trim(),direccion:fdir,direccionUrl:fdirUrl}})});
     const data=await res.json();
     if(data.init_point) window.location.href=data.init_point;
     else throw new Error();
@@ -397,5 +408,47 @@ const obs=new IntersectionObserver(e=>{e.forEach(x=>{if(x.isIntersecting){x.targ
 document.querySelectorAll('.rv').forEach(el=>obs.observe(el));
 window.addEventListener('scroll',()=>{document.getElementById('nav').style.boxShadow=window.scrollY>50?'0 2px 20px rgba(127,255,0,.05)':'none';});
 </script>
+<!-- Google Maps Places Autocomplete -->
+<script>
+function initMapsAutocomplete(){
+  const input=document.getElementById('fdir');
+  if(!input||!window.google)return;
+  const ac=new google.maps.places.Autocomplete(input,{
+    componentRestrictions:{country:'ar'},
+    fields:['formatted_address','geometry'],
+    types:['address']
+  });
+  const sty=document.createElement('style');
+  sty.textContent='.pac-container{background:#1a1a1a;border:1px solid #7fff0033;border-radius:6px;margin-top:2px;font-family:\'Barlow\',sans-serif}.pac-item{color:#ccc;border-top:1px solid #333;padding:6px 10px;cursor:pointer}.pac-item:hover,.pac-item-selected{background:#252525}.pac-item-query{color:#7fff00}.pac-icon{display:none}';
+  document.head.appendChild(sty);
+  ac.addListener('place_changed',()=>{
+    const p=ac.getPlace();
+    if(!p.geometry){
+      document.getElementById('fdir-lat').value='';
+      document.getElementById('fdir-lng').value='';
+      document.getElementById('fdir-url').value='';
+      document.getElementById('fdir-status').style.display='none';
+      return;
+    }
+    const lat=p.geometry.location.lat(),lng=p.geometry.location.lng();
+    const url='https://www.google.com/maps/search/?api=1&query='+lat+','+lng;
+    document.getElementById('fdir-lat').value=lat;
+    document.getElementById('fdir-lng').value=lng;
+    document.getElementById('fdir-url').value=url;
+    const st=document.getElementById('fdir-status');
+    st.style.display='block';
+    st.textContent='📍 '+( p.formatted_address||input.value);
+  });
+  input.addEventListener('input',()=>{
+    if(!input.value){
+      document.getElementById('fdir-lat').value='';
+      document.getElementById('fdir-lng').value='';
+      document.getElementById('fdir-url').value='';
+      document.getElementById('fdir-status').style.display='none';
+    }
+  });
+}
+</script>
+<script src="https://maps.googleapis.com/maps/api/js?key=TU_API_KEY_AQUI&libraries=places&callback=initMapsAutocomplete&loading=async" async defer></script>
 </body>
 </html>
