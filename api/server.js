@@ -48,6 +48,9 @@ async function guardarPedido(preferenceId, datos) {
           nombre:       { stringValue: datos.nombre    || "" },
           email:        { stringValue: datos.email     || "" },
           telefono:     { stringValue: datos.tel       || "" },
+          dni:          { stringValue: datos.dni       || "" },
+          direccion:    { stringValue: datos.direccion || "" },
+          direccionUrl: { stringValue: datos.direccionUrl || "" },
           producto:     { stringValue: datos.producto  || "" },
           precioUSD:    { stringValue: String(datos.precioUSD || 0) },
           createdAt:    { stringValue: new Date().toISOString() },
@@ -103,6 +106,9 @@ async function leerPedido(preferenceId) {
       nombre:       data.fields.nombre?.stringValue       || "",
       email:        data.fields.email?.stringValue        || "",
       telefono:     data.fields.telefono?.stringValue     || "",
+      dni:          data.fields.dni?.stringValue          || "",
+      direccion:    data.fields.direccion?.stringValue    || "",
+      direccionUrl: data.fields.direccionUrl?.stringValue || "",
       producto:     data.fields.producto?.stringValue     || "",
       precioUSD:    Number(data.fields.precioUSD?.stringValue || data.fields.precioUSD?.integerValue || 0),
       emailEnviado: data.fields.emailEnviado?.booleanValue ?? false,
@@ -258,7 +264,7 @@ function templateCliente({ nombre, producto, precio, referencia }) {
 }
 
 // ── Template ADMIN ──
-function templateAdmin({ nombre, email, telefono, producto, precio, referencia }) {
+function templateAdmin({ nombre, email, telefono, dni, direccion, direccionUrl, producto, precio, referencia }) {
   const fecha = new Date().toLocaleDateString("es-AR", {
     day: "numeric", month: "long", year: "numeric",
     hour: "2-digit", minute: "2-digit", timeZone: "America/Argentina/Cordoba",
@@ -335,6 +341,25 @@ function templateAdmin({ nombre, email, telefono, producto, precio, referencia }
       </tr>
       <tr style="border-bottom:1px solid #F0F0F0;">
         <td width="38%" style="padding:11px 14px;background:#FAFAFA;">
+          <p style="margin:0;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;">DNI</p>
+        </td>
+        <td style="padding:11px 14px;">
+          <p style="margin:0;font-size:13px;color:#0A0A0A;">${dni || "No ingresado"}</p>
+        </td>
+      </tr>
+      <tr style="border-bottom:1px solid #F0F0F0;">
+        <td width="38%" style="padding:11px 14px;background:#FAFAFA;">
+          <p style="margin:0;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;">Dirección entrega</p>
+        </td>
+        <td style="padding:11px 14px;">
+          ${direccionUrl
+            ? `<a href="${direccionUrl}" style="font-size:13px;color:#0066CC;text-decoration:none;">${direccion || "Ver en Maps"}</a>`
+            : `<p style="margin:0;font-size:13px;color:#0A0A0A;">${direccion || "No ingresada"}</p>`
+          }
+        </td>
+      </tr>
+      <tr style="border-bottom:1px solid #F0F0F0;">
+        <td width="38%" style="padding:11px 14px;background:#FAFAFA;">
           <p style="margin:0;font-size:11px;font-weight:600;color:#888;text-transform:uppercase;">Fecha y hora</p>
         </td>
         <td style="padding:11px 14px;">
@@ -354,18 +379,25 @@ function templateAdmin({ nombre, email, telefono, producto, precio, referencia }
     <!-- Acciones rápidas -->
     <p style="margin:0 0 10px;font-size:10px;font-weight:700;color:#888;letter-spacing:2px;text-transform:uppercase;">ACCIONES RÁPIDAS</p>
     <table width="100%" cellpadding="0" cellspacing="0"><tr>
-      <td width="49%" style="padding-right:5px;">
+      <td width="32%" style="padding-right:4px;">
         <a href="${waLink}"
           style="display:block;text-align:center;background:#25D366;color:#ffffff;text-decoration:none;
             padding:12px;border-radius:8px;font-size:12px;font-weight:700;">
-          💬 WhatsApp al cliente
+          💬 WhatsApp
         </a>
       </td>
-      <td width="49%" style="padding-left:5px;">
+      <td width="32%" style="padding:0 4px;">
         <a href="${mailLink}"
           style="display:block;text-align:center;background:#0A0A0A;color:#ffffff;text-decoration:none;
             padding:12px;border-radius:8px;font-size:12px;font-weight:700;">
-          ✉️ Responder por email
+          ✉️ Email
+        </a>
+      </td>
+      <td width="36%" style="padding-left:4px;">
+        <a href="${direccionUrl || `https://maps.google.com/?q=${encodeURIComponent(direccion || 'Córdoba Argentina')}`}"
+          style="display:block;text-align:center;background:#4285F4;color:#ffffff;text-decoration:none;
+            padding:12px;border-radius:8px;font-size:12px;font-weight:700;">
+          📍 Ver en Maps
         </a>
       </td>
     </tr></table>
@@ -434,6 +466,9 @@ app.post("/api/simular-compra", async (req, res) => {
       nombre,
       email,
       telefono,
+      dni,
+      direccion,
+      direccionUrl,
       producto,
       precioUSD
     } = req.body;
@@ -452,6 +487,9 @@ app.post("/api/simular-compra", async (req, res) => {
       nombre,
       email,
       tel: telefono || "",
+      dni: dni || "",
+      direccion: direccion || "",
+      direccionUrl: direccionUrl || "",
       producto,
       precioUSD
     });
@@ -480,6 +518,9 @@ app.post("/api/simular-compra", async (req, res) => {
         nombre,
         email,
         telefono,
+        dni: dni || "",
+        direccion: direccion || "",
+        direccionUrl: direccionUrl || "",
         producto,
         precio: precioUSD,
         referencia
@@ -588,7 +629,17 @@ app.post("/api/webhook", async (req, res) => {
     await enviarEmail({
       to: ADMIN_EMAIL,
       subject: `⚡ Nueva venta ${producto}`,
-      html: templateAdmin({ nombre, email: emailDst, telefono, producto, precio, referencia }),
+      html: templateAdmin({
+        nombre,
+        email: emailDst,
+        telefono,
+        dni: comprador?.dni || "",
+        direccion: comprador?.direccion || "",
+        direccionUrl: comprador?.direccionUrl || "",
+        producto,
+        precio,
+        referencia
+      }),
     });
     console.log("✅ Email admin enviado");
 
