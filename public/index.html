@@ -408,47 +408,95 @@ const obs=new IntersectionObserver(e=>{e.forEach(x=>{if(x.isIntersecting){x.targ
 document.querySelectorAll('.rv').forEach(el=>obs.observe(el));
 window.addEventListener('scroll',()=>{document.getElementById('nav').style.boxShadow=window.scrollY>50?'0 2px 20px rgba(127,255,0,.05)':'none';});
 </script>
-<!-- Google Maps Places Autocomplete -->
+<!-- Autocompletado de dirección con Nominatim (OpenStreetMap) — gratis, sin API key -->
+<style>
+#nominatim-list{position:absolute;z-index:9999;background:#1a1a1a;border:1px solid #7fff0033;border-radius:6px;margin-top:2px;width:100%;max-height:220px;overflow-y:auto;display:none;font-family:'Barlow',sans-serif;}
+#nominatim-list li{list-style:none;padding:8px 12px;color:#ccc;cursor:pointer;font-size:.85rem;border-bottom:1px solid #2a2a2a;}
+#nominatim-list li:hover,#nominatim-list li.active{background:#252525;color:#7fff00;}
+#fdir-wrap{position:relative;}
+</style>
 <script>
-function initMapsAutocomplete(){
-  const input=document.getElementById('fdir');
-  if(!input||!window.google)return;
-  const ac=new google.maps.places.Autocomplete(input,{
-    componentRestrictions:{country:'ar'},
-    fields:['formatted_address','geometry'],
-    types:['address']
-  });
-  const sty=document.createElement('style');
-  sty.textContent='.pac-container{background:#1a1a1a;border:1px solid #7fff0033;border-radius:6px;margin-top:2px;font-family:\'Barlow\',sans-serif}.pac-item{color:#ccc;border-top:1px solid #333;padding:6px 10px;cursor:pointer}.pac-item:hover,.pac-item-selected{background:#252525}.pac-item-query{color:#7fff00}.pac-icon{display:none}';
-  document.head.appendChild(sty);
-  ac.addListener('place_changed',()=>{
-    const p=ac.getPlace();
-    if(!p.geometry){
-      document.getElementById('fdir-lat').value='';
-      document.getElementById('fdir-lng').value='';
-      document.getElementById('fdir-url').value='';
-      document.getElementById('fdir-status').style.display='none';
-      return;
-    }
-    const lat=p.geometry.location.lat(),lng=p.geometry.location.lng();
-    const url='https://www.google.com/maps/search/?api=1&query='+lat+','+lng;
-    document.getElementById('fdir-lat').value=lat;
-    document.getElementById('fdir-lng').value=lng;
-    document.getElementById('fdir-url').value=url;
-    const st=document.getElementById('fdir-status');
-    st.style.display='block';
-    st.textContent='📍 '+( p.formatted_address||input.value);
-  });
-  input.addEventListener('input',()=>{
-    if(!input.value){
-      document.getElementById('fdir-lat').value='';
-      document.getElementById('fdir-lng').value='';
-      document.getElementById('fdir-url').value='';
-      document.getElementById('fdir-status').style.display='none';
-    }
-  });
-}
+(function(){
+  const DEBOUNCE=400;
+  let timer=null, lastQ='', abortCtrl=null;
+
+  function init(){
+    const input=document.getElementById('fdir');
+    if(!input)return;
+
+    // Envolver en wrapper para posicionar el dropdown
+    const wrap=document.createElement('div');
+    wrap.id='fdir-wrap';
+    input.parentNode.insertBefore(wrap,input);
+    wrap.appendChild(input);
+    const list=document.createElement('ul');
+    list.id='nominatim-list';
+    wrap.appendChild(list);
+
+    input.addEventListener('input',()=>{
+      const q=input.value.trim();
+      clearTimeout(timer);
+      resetHidden();
+      if(q.length<3){list.style.display='none';return;}
+      if(q===lastQ)return;
+      timer=setTimeout(()=>buscar(q,input,list),DEBOUNCE);
+    });
+
+    input.addEventListener('keydown',e=>{
+      const items=list.querySelectorAll('li');
+      const active=list.querySelector('li.active');
+      if(e.key==='ArrowDown'){e.preventDefault();const n=active?active.nextElementSibling:items[0];if(n){active&&active.classList.remove('active');n.classList.add('active');}}
+      else if(e.key==='ArrowUp'){e.preventDefault();const p=active?active.previousElementSibling:null;if(p){active.classList.remove('active');p.classList.add('active');}}
+      else if(e.key==='Enter'&&active){e.preventDefault();active.click();}
+      else if(e.key==='Escape'){list.style.display='none';}
+    });
+
+    document.addEventListener('click',e=>{if(!wrap.contains(e.target))list.style.display='none';});
+  }
+
+  function buscar(q,input,list){
+    lastQ=q;
+    if(abortCtrl)abortCtrl.abort();
+    abortCtrl=new AbortController();
+    const url='https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=5&countrycodes=ar&q='+encodeURIComponent(q);
+    fetch(url,{signal:abortCtrl.signal,headers:{'Accept-Language':'es'}})
+      .then(r=>r.json())
+      .then(data=>{
+        list.innerHTML='';
+        if(!data.length){list.style.display='none';return;}
+        data.forEach(item=>{
+          const li=document.createElement('li');
+          li.textContent=item.display_name;
+          li.addEventListener('click',()=>{
+            input.value=item.display_name;
+            const lat=parseFloat(item.lat),lng=parseFloat(item.lon);
+            const mapsUrl='https://www.google.com/maps/search/?api=1&query='+lat+','+lng;
+            document.getElementById('fdir-lat').value=lat;
+            document.getElementById('fdir-lng').value=lng;
+            document.getElementById('fdir-url').value=mapsUrl;
+            const st=document.getElementById('fdir-status');
+            st.style.display='block';
+            st.textContent='📍 '+item.display_name;
+            list.style.display='none';
+            lastQ=item.display_name;
+          });
+          list.appendChild(li);
+        });
+        list.style.display='block';
+      })
+      .catch(()=>{});
+  }
+
+  function resetHidden(){
+    document.getElementById('fdir-lat').value='';
+    document.getElementById('fdir-lng').value='';
+    document.getElementById('fdir-url').value='';
+    document.getElementById('fdir-status').style.display='none';
+  }
+
+  if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',init);}
+  else{init();}
+})();
 </script>
-<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAR2fw5FkNJOmvCwe96isTwKWU1isndpZg&libraries=places&callback=initMapsAutocomplete&loading=async" async defer></script>
 </body>
 </html>
